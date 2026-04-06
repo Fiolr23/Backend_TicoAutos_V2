@@ -7,17 +7,16 @@ const {
   vehicleGet,
   vehicleGetById,
   vehicleGetMine,
+  vehiclePatchSold,
+  vehiclePatchStatus,
   vehiclePost,
   vehiclePut,
 } = require("../controllers/crudVehiculosController");
-const {
-  vehiclePatchSold,
-  vehiclePatchStatus,
-} = require("../controllers/vehicleController");
 
 const router = express.Router();
 
-// Centraliza errores de multer para las imagenes del vehiculo.
+// Este wrapper deja intacto el middleware actual de multer.
+// Solo convierte sus errores en una respuesta JSON consistente.
 const runVehicleUpload = (req, res, next) => {
   uploadVehicleImages(req, res, (error) => {
     if (error) {
