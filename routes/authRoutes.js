@@ -1,10 +1,13 @@
 const express = require("express");
 const router = express.Router();
 
-const { generateToken, authenticateToken, logout } = require("../middleware/auth");
+const { generateToken, googleAuth, authenticateToken, logout } = require("../middleware/auth");
 
 // POST /api/auth/login
 router.post("/login", generateToken);
+
+// POST /api/auth/google
+router.post("/google", googleAuth);
 
 // POST /api/auth/logout (protegida)
 router.post("/logout", authenticateToken, logout);
