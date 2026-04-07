@@ -28,9 +28,16 @@ const userSchema = new mongoose.Schema(
         trim: true, 
         lowercase: true 
     },
-    password: { // se guarda hasheada
-        type: String, 
-        required: true 
+    // Se guarda el identificador estable que Google entrega en "sub".
+    // Solo existe cuando la cuenta fue creada con Google.
+    googleId: {
+        type: String,
+        unique: true,
+        sparse: true,
+        trim: true
+    },
+    password: { // se guarda hasheada para cuentas locales
+        type: String
     }
   },
   { timestamps: true }

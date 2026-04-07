@@ -1,5 +1,6 @@
 const bcrypt = require("bcryptjs");
 const User = require("../models/user");
+const { buildAuthUser, generateJwt, verifyGoogleCredential } = require("../middleware/auth");
 
 // Verifica que tenga formato: texto@texto.dominio
 const isValidEmail = (email) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
@@ -175,4 +176,83 @@ const register = async (req, res) => {
   }
 };
 
-module.exports = { register, validateCedula };
+// Registro con Google.
+// El usuario no se crea al hacer clic en Google por primera vez.
+// Solo se crea cuando la cuenta Google ya fue verificada y además la cédula
+// pasó la validación existente contra el padrón.
+const registerWithGoogle = async (req, res) => {
+  try {
+    const { credential, cedula } = req.body;
+
+    if (!credential || !cedula) {
+      return res.status(400).json({ message: "La credencial de Google y la cedula son requeridas" });
+    }
+
+    if (!isValidCedula(cedula)) {
+      return res.status(400).json({ message: "La cedula debe tener exactamente 9 digitos" });
+    }
+
+    let payload;
+
+    try {
+      payload = await verifyGoogleCredential(credential);
+    } catch (error) {
+      console.error("Error validando Google en registerWithGoogle:", error);
+
+      return res.status(error.message.includes("GOOGLE_CLIENT_ID") ? 500 : 401).json({
+        message: error.message.includes("GOOGLE_CLIENT_ID")
+          ? "Google no esta configurado en el servidor"
+          : "No se pudo validar la cuenta de Google",
+      });
+    }
+
+    const googleId = `${payload.sub}`.trim();
+    const email = `${payload.email}`.toLowerCase().trim();
+
+    const googleUserExists = await User.findOne({ googleId });
+    if (googleUserExists) {
+      return res.status(409).json({
+        message: "Esta cuenta de Google ya fue registrada. Usa Acceder con Google.",
+      });
+    }
+
+    const emailExists = await User.findOne({ email });
+    if (emailExists) {
+      return res.status(409).json({ message: "Ya existe un usuario con ese correo" });
+    }
+
+    const cedulaExists = await User.findOne({ cedula: cedula.trim() });
+    if (cedulaExists) {
+      return res.status(409).json({ message: "Ya existe un usuario con esa cedula" });
+    }
+
+    const padronResult = await getPadronData(cedula.trim());
+
+    if (!padronResult.ok) {
+      return res.status(400).json({ message: "La cedula no existe o no pudo validarse en el padron" });
+    }
+
+    const lastname = `${padronResult.data.apellidoPaterno} ${padronResult.data.apellidoMaterno}`.trim();
+
+    const newUser = await User.create({
+      cedula: padronResult.data.cedula,
+      name: padronResult.data.nombre,
+      lastname,
+      email,
+      googleId,
+    });
+
+    const token = generateJwt(newUser);
+
+    return res.status(201).json({
+      message: "Registro con Google exitoso",
+      token,
+      user: buildAuthUser(newUser),
+    });
+  } catch (error) {
+    console.error("Error en registerWithGoogle:", error);
+    return res.status(500).json({ message: "Error registrando usuario con Google" });
+  }
+};
+
+module.exports = { register, registerWithGoogle, validateCedula };
