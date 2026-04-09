@@ -38,6 +38,35 @@ const userSchema = new mongoose.Schema(
     },
     password: { // se guarda hasheada para cuentas locales
         type: String
+    },
+    accountStatus: {
+      // El tipo es texto.
+      type: String,
+      // Solo permite estos dos valores.
+      enum: ["Pendiente", "Activa"],
+      // Por defecto una cuenta nueva queda activa.
+      // Luego en el registro local la pondremos manualmente en Pendiente.
+      default: "Activa",
+      // Elimina espacios extras.
+      trim: true
+    },
+
+    // Guarda el JWT de verificación que se envía por correo.
+    emailVerificationToken: {
+      type: String,
+      default: null
+    },
+
+    // Guarda la fecha de expiración del JWT de verificación.
+    emailVerificationExpiresAt: {
+      type: Date,
+      default: null
+    },
+
+    // Guarda cuándo fue verificado el correo.
+    emailVerifiedAt: {
+      type: Date,
+      default: null
     }
   },
   { timestamps: true }
