@@ -1,6 +1,9 @@
 const bcrypt = require("bcryptjs");
+// Importa jsonwebtoken para generar JWT de verificación.
+const jwt = require("jsonwebtoken");
 const User = require("../models/user");
 const { buildAuthUser, generateJwt, verifyGoogleCredential } = require("../middleware/auth");
+const { sendVerificationEmail } = require("../utils/sendGrid");
 
 // Verifica que tenga formato: texto@texto.dominio
 const isValidEmail = (email) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
@@ -8,6 +11,32 @@ const isValidEmail = (email) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
 // Valida que la cédula tenga exactamente 9 dígitos numéricos
 // Convierte a string, elimina espacios y aplica regex
 const isValidCedula = (cedula) => /^\d{9}$/.test(`${cedula || ""}`.trim());
+
+// Secret para firmar el JWT de verificación de correo.
+const EMAIL_VERIFICATION_SECRET = process.env.EMAIL_VERIFICATION_SECRET || "email-verification-secret";
+
+// Tiempo de expiración del JWT de verificación.
+const EMAIL_VERIFICATION_EXPIRES_IN = process.env.EMAIL_VERIFICATION_EXPIRES_IN || "1d";
+
+// Función simple para calcular fecha de expiración real en la BD.
+const getVerificationExpirationDate = () => new Date(Date.now() + 24 * 60 * 60 * 1000);
+
+// Genera el JWT que viajará en el correo.
+const generateEmailVerificationToken = (user) =>
+  jwt.sign(
+    {
+      // Guarda el id del usuario.
+      userId: user._id,
+      // Guarda el correo del usuario.
+      email: user.email,
+      // Guarda el propósito del token para saber que es de verificación.
+      purpose: "email_verification"
+    },
+    // Secret usado para firmar el token.
+    EMAIL_VERIFICATION_SECRET,
+    // Configura la expiración del JWT.
+    { expiresIn: EMAIL_VERIFICATION_EXPIRES_IN }
+  );
 
 // Función que consulta el API del padrón
 // Sirve para validar si la cédula existe y obtener datos reales
@@ -156,22 +185,57 @@ const register = async (req, res) => {
       lastname,
       email: email.toLowerCase().trim(),
       password: hashedPassword,
+      accountStatus: "Pendiente", // La cuenta queda pendiente hasta verificar correo
     });
 
-    // Respuesta exitosa 
+    // Genera el JWT de verificación usando el usuario ya creado.
+    const emailVerificationToken = generateEmailVerificationToken(newUser);
+
+    // Guarda el JWT en la base para que sea de un solo uso.
+    newUser.emailVerificationToken = emailVerificationToken;
+
+    // Guarda la expiración del token en la base.
+    newUser.emailVerificationExpiresAt = getVerificationExpirationDate();
+
+    // Guarda los cambios.
+    await newUser.save();
+
+    try {
+      // Envía el correo real con SendGrid.
+      await sendVerificationEmail({
+        to: newUser.email,
+        name: newUser.name,
+        token: emailVerificationToken
+      });
+    } catch (emailError) {
+      // Muestra el error del correo en consola.
+      console.error("Error enviando correo de verificacion:", emailError?.response?.body || emailError);
+
+      // Si falla el envío, elimina el usuario recién creado para no dejar basura.
+      await User.findByIdAndDelete(newUser._id);
+
+      // Devuelve error al cliente.
+      return res.status(500).json({
+        message: "No se pudo enviar el correo de verificacion. Intenta nuevamente."
+      });
+    }
+
+    // Responde éxito de registro.
     return res.status(201).json({
-      message: "Registro exitoso",
+      message: "Registro exitoso. Revisa tu correo para activar la cuenta",
       user: {
         id: newUser._id,
         cedula: newUser.cedula,
         name: newUser.name,
         lastname: newUser.lastname,
         email: newUser.email,
-      },
+        accountStatus: newUser.accountStatus
+      }
     });
-
   } catch (error) {
+    // Log de error interno.
     console.error("Error en register:", error);
+    // Respuesta genérica.
     return res.status(500).json({ message: "Error registrando usuario" });
   }
 };
@@ -184,6 +248,7 @@ const registerWithGoogle = async (req, res) => {
   try {
     const { credential, cedula } = req.body;
 
+    // Extrae la credencial y la cédula.
     if (!credential || !cedula) {
       return res.status(400).json({ message: "La credencial de Google y la cedula son requeridas" });
     }
@@ -195,6 +260,7 @@ const registerWithGoogle = async (req, res) => {
     let payload;
 
     try {
+      // Verifica la credencial de Google.
       payload = await verifyGoogleCredential(credential);
     } catch (error) {
       console.error("Error validando Google en registerWithGoogle:", error);
@@ -240,6 +306,8 @@ const registerWithGoogle = async (req, res) => {
       lastname,
       email,
       googleId,
+      accountStatus: "Activa",
+      emailVerifiedAt: new Date()
     });
 
     const token = generateJwt(newUser);
