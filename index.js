@@ -8,6 +8,7 @@ const userRoutes = require("./routes/userRoutes");
 const authRoutes = require("./routes/authRoutes");
 const vehicleRoutes = require("./routes/vehicleRoutes");
 const messageRoutes = require("./routes/messageRoutes");
+const { registerGraphQL } = require("./graphql/server");
 
 const app = express();
 app.use(cors());
@@ -21,13 +22,22 @@ app.use("/api/questions", messageRoutes);
 
 const PORT = process.env.PORT || 3000;
 
-mongoose
-  .connect(process.env.MONGO_URI)
-  .then(() => {
+// Inicia MongoDB, Apollo y Express usando la misma app.
+async function startServer() {
+  try {
+    await mongoose.connect(process.env.MONGO_URI);
     console.log("Mongo conectado");
-    app.listen(PORT, () => console.log(`API en http://localhost:${PORT}`));
-  })
-  .catch((err) => {
-    console.error("Error Mongo:", err);
+
+    await registerGraphQL(app);
+
+    app.listen(PORT, () => {
+      console.log(`API en http://localhost:${PORT}`);
+      console.log(`GraphQL en http://localhost:${PORT}/graphql`);
+    });
+  } catch (err) {
+    console.error("Error iniciando servidor:", err);
     process.exit(1);
-  });
+  }
+}
+
+startServer();
