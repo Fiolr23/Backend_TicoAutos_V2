@@ -39,6 +39,25 @@ const userSchema = new mongoose.Schema(
     password: { // se guarda hasheada para cuentas locales
         type: String
     },
+
+    // Telefono usado para enviar el codigo 2FA por SMS.
+    phone: {
+        type: String,
+        trim: true
+    },
+
+    // Codigo 2FA guardado como hash con bcrypt.
+    twoFactorCode: {
+      type: String,
+      default: null
+    },
+
+    // Fecha y hora en que vence el codigo 2FA.
+    twoFactorCodeExpires: {
+      type: Date,
+      default: null
+    },
+
     accountStatus: {
       // El tipo es texto.
       type: String,
@@ -73,3 +92,4 @@ const userSchema = new mongoose.Schema(
 );
 
 module.exports = mongoose.model("User", userSchema);
+
