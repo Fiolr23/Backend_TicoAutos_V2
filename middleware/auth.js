@@ -5,8 +5,14 @@ const jwt = require("jsonwebtoken");
 // Importa cliente oficial de Google.
 const { OAuth2Client } = require("google-auth-library");
 
+// Helper para enviar SMS con Twilio.
+const { sendTwoFactorCode } = require("../utils/twilioSms");
+
 const JWT_SECRET = process.env.JWT_SECRET || "utn-api-secret-key";
 const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || "7d";
+
+// Minutos que dura valido el codigo 2FA.
+const TWO_FACTOR_CODE_EXPIRES_MINUTES = Number(process.env.TWO_FACTOR_CODE_EXPIRES_MINUTES || 5);
 
 // Client ID de Google.
 const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID || "";
@@ -43,6 +49,11 @@ const generateJwt = (user) =>
     // Configura expiración del token.
     { expiresIn: JWT_EXPIRES_IN }
   );
+
+// Genera un codigo numerico de 6 digitos para 2FA.
+const generateTwoFactorCode = () => {
+  return Math.floor(100000 + Math.random() * 900000).toString();
+};
 
 // Verifica el token de Google.
 const verifyGoogleCredential = async (credential) => {
@@ -131,6 +142,7 @@ const generateToken = async (req, res) => {
     }
 
     // Si la cuenta sigue pendiente, bloquea el login.
+    // Esto mantiene intacta la verificacion de correo electronico.
     if (user.accountStatus === "Pendiente") {
       return res.status(403).json({
         message: "Debes verificar tu correo antes de iniciar sesion"
@@ -138,6 +150,7 @@ const generateToken = async (req, res) => {
     }
 
     // Si no tiene password, significa que fue creado con Google.
+    // Google no usa 2FA porque entra por otro flujo.
     if (!user.password) {
       return res.status(401).json({
         message: "Esta cuenta fue registrada con Google. Usa Acceder con Google."
@@ -152,14 +165,45 @@ const generateToken = async (req, res) => {
       return res.status(401).json({ message: "Invalid email or password" });
     }
 
-    // Genera JWT de sesión.
-    const token = generateJwt(user);
+    // Si no tiene telefono, no se puede enviar el codigo 2FA.
+    if (!user.phone) {
+      return res.status(400).json({
+        message: "Tu usuario no tiene telefono registrado para 2FA"
+      });
+    }
 
-    // Responde login exitoso.
+    // Genera el codigo que recibira el usuario por SMS.
+    const twoFactorCode = generateTwoFactorCode();
+
+    // Guarda el codigo como hash para no almacenarlo en texto plano.
+    user.twoFactorCode = await bcrypt.hash(twoFactorCode, 10);
+
+    // Guarda la fecha de expiracion del codigo.
+    user.twoFactorCodeExpires = new Date(Date.now() + TWO_FACTOR_CODE_EXPIRES_MINUTES * 60 * 1000);
+
+    // Guarda los datos temporales de 2FA.
+    await user.save();
+
+    try {
+      // Envia el codigo real por SMS.
+      await sendTwoFactorCode({
+        to: user.phone,
+        code: twoFactorCode
+      });
+    } catch (smsError) {
+      // Si Twilio falla, se informa el error.
+      console.error("Error enviando SMS 2FA:", smsError);
+
+      return res.status(500).json({
+        message: "No se pudo enviar el codigo por SMS"
+      });
+    }
+
+    // No se entrega JWT todavia; primero debe verificar el codigo.
     return res.status(200).json({
-      message: "Login exitoso",
-      token,
-      user: buildAuthUser(user)
+      message: "Codigo 2FA enviado por SMS",
+      requiresTwoFactor: true,
+      userId: user._id
     });
   } catch (error) {
     // Log del error.
@@ -167,6 +211,64 @@ const generateToken = async (req, res) => {
 
     // Respuesta genérica.
     return res.status(500).json({ message: "Error generating token" });
+  }
+};
+
+// Verifica el codigo 2FA y entrega el JWT final.
+const verifyTwoFactorCode = async (req, res) => {
+  // Recibe el usuario pendiente y el codigo escrito.
+  const { userId, code } = req.body;
+
+  // Valida datos obligatorios.
+  if (!userId || !code) {
+    return res.status(400).json({ message: "Usuario y codigo son requeridos" });
+  }
+
+  try {
+    // Busca el usuario que esta intentando completar login.
+    const user = await User.findById(userId);
+
+    if (!user) {
+      return res.status(404).json({ message: "Usuario no encontrado" });
+    }
+
+    // Verifica que exista un codigo pendiente.
+    if (!user.twoFactorCode || !user.twoFactorCodeExpires) {
+      return res.status(400).json({ message: "No hay codigo 2FA pendiente" });
+    }
+
+    // Revisa si el codigo ya vencio.
+    if (user.twoFactorCodeExpires.getTime() < Date.now()) {
+      user.twoFactorCode = null;
+      user.twoFactorCodeExpires = null;
+      await user.save();
+
+      return res.status(400).json({ message: "El codigo 2FA expiro" });
+    }
+
+    // Compara el codigo escrito contra el hash guardado.
+    const codeMatches = await bcrypt.compare(`${code}`.trim(), user.twoFactorCode);
+
+    if (!codeMatches) {
+      return res.status(401).json({ message: "Codigo 2FA incorrecto" });
+    }
+
+    // Limpia el codigo para que no pueda reutilizarse.
+    user.twoFactorCode = null;
+    user.twoFactorCodeExpires = null;
+    await user.save();
+
+    // Ahora si genera el JWT final de sesion.
+    const token = generateJwt(user);
+
+    return res.status(200).json({
+      message: "Login exitoso",
+      token,
+      user: buildAuthUser(user)
+    });
+  } catch (error) {
+    console.error("Error verificando 2FA:", error);
+    return res.status(500).json({ message: "Error verificando codigo 2FA" });
   }
 };
 
@@ -342,5 +444,6 @@ module.exports = {
   googleAuth,
   logout,
   verifyEmail,
-  verifyGoogleCredential
+  verifyGoogleCredential,
+  verifyTwoFactorCode
 };

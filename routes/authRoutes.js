@@ -1,10 +1,21 @@
 const express = require("express");
 const router = express.Router();
 
-const { generateToken, googleAuth, authenticateToken, logout, verifyEmail } = require("../middleware/auth");
+const {
+  generateToken,
+  googleAuth,
+  authenticateToken,
+  logout,
+  verifyEmail,
+  verifyTwoFactorCode
+} = require("../middleware/auth");
 
 // POST /api/auth/login
 router.post("/login", generateToken);
+
+// POST /api/auth/2fa/verify
+// Verifica el codigo SMS y genera el JWT final.
+router.post("/2fa/verify", verifyTwoFactorCode);
 
 // POST /api/auth/google
 router.post("/google", googleAuth);
