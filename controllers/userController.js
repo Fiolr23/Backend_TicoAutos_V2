@@ -12,6 +12,12 @@ const isValidEmail = (email) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
 // Convierte a string, elimina espacios y aplica regex
 const isValidCedula = (cedula) => /^\d{9}$/.test(`${cedula || ""}`.trim());
 
+// Valida telefono de Costa Rica: solo 8 digitos, sin +506.
+const isValidCostaRicaPhone = (phone) => /^\d{8}$/.test(`${phone || ""}`.trim());
+
+// Convierte el telefono nacional a formato internacional para Twilio.
+const normalizeCostaRicaPhone = (phone) => `+506${phone.trim()}`;
+
 // Secret para firmar el JWT de verificación de correo.
 const EMAIL_VERIFICATION_SECRET = process.env.EMAIL_VERIFICATION_SECRET || "email-verification-secret";
 
@@ -127,12 +133,12 @@ const validateCedula = async (req, res) => {
 // Endpoint para registrar un usuario
 const register = async (req, res) => {
   try {
-    // Extrae datos del body (POST)
-    const { cedula, email, password } = req.body;
+    // Extrae datos del body (POST), incluyendo telefono para 2FA.
+    const { cedula, email, password, phone } = req.body;
 
-    // Valida que todos los campos existan
-    if (!cedula || !email || !password) {
-      return res.status(400).json({ message: "Cedula, correo y contraseña son requeridos" });
+    // Valida que todos los campos existan.
+    if (!cedula || !email || !password || !phone) {
+      return res.status(400).json({ message: "Cedula, correo, contraseña y telefono son requeridos" });
     }
 
     // Valida formato de cédula
@@ -144,6 +150,16 @@ const register = async (req, res) => {
     if (!isValidEmail(email)) {
       return res.status(400).json({ message: "Correo inválido" });
     }
+
+    // Valida que el usuario escriba solo 8 digitos de Costa Rica.
+    if (!isValidCostaRicaPhone(phone)) {
+      return res.status(400).json({
+        message: "El telefono debe tener exactamente 8 digitos. Ejemplo: 86488491"
+      });
+    }
+
+    // Agrega +506 antes de guardar y enviar SMS con Twilio.
+    const normalizedPhone = normalizeCostaRicaPhone(phone);
 
     // Valida longitud mínima de contraseña
     if (password.length < 6) {
@@ -185,6 +201,7 @@ const register = async (req, res) => {
       lastname,
       email: email.toLowerCase().trim(),
       password: hashedPassword,
+      phone: normalizedPhone, // Se guarda con +506 para que Twilio pueda enviar SMS.
       accountStatus: "Pendiente", // La cuenta queda pendiente hasta verificar correo
     });
 
@@ -229,6 +246,7 @@ const register = async (req, res) => {
         name: newUser.name,
         lastname: newUser.lastname,
         email: newUser.email,
+        phone: newUser.phone,
         accountStatus: newUser.accountStatus
       }
     });
