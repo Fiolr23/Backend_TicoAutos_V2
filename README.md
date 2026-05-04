@@ -1,4 +1,5 @@
-Backend TicoAutos
+
+**Backend TicoAutos**
 
 Backend principal de TicoAutos. Este proyecto expone una API REST para manejar usuarios, autenticacion, vehiculos, imagenes y conversaciones entre compradores y propietarios.
 
@@ -75,3 +76,7 @@ Chats y preguntas:
 - `maxPrice`
 - `page`
 - `limit`
+
+
+**DIAGRAMA**
+<img width="832" height="685" alt="Imagen diagrama" src="https://github.com/user-attachments/assets/7b2ee2e2-d849-4a7b-950e-1912c06244e9" />
